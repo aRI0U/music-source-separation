@@ -1,1 +1,4 @@
+configs
 datasets
+runs
+**/__pycache__
