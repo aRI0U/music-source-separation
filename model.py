@@ -94,11 +94,14 @@ class AmplitudeEstimator(nn.Module):
             nn.ReLU()
         )
 
-        # final layers
+        # combining layers
         self.fc_final = nn.Sequential(
             nn.Linear(500, 2049),
             nn.ReLU()
         )
+
+        self.reshape = nn.Linear(2, 1)
+
 
     def forward(self, amplitude, phase_features):
         """Estimate the amplitude of the unmixed signal
@@ -121,10 +124,17 @@ class AmplitudeEstimator(nn.Module):
         A = self.fc_A2(A)
 
         # extract features from phase features
-        # phi = self.fc_phi1(phase_features)
-        # phi = self.fc_phi2(phase_features)
+        phi = self.fc_phi1(phase_features)
+        phi = self.fc_phi2(phi)
 
-        return self.fc_final(A)
+        features = torch.stack([A, phi], dim=-2)
+        features = self.fc_final(features)
+
+        features = self.reshape(features.transpose(-2,-1)).squeeze(-1)
+
+        features = self.bias_layer(features, False)
+
+        return features
 
 
 
@@ -157,7 +167,7 @@ class MSS(nn.Module):
         A_hat = self.estimator(A, phi)
 
         phase = torch.stack((torch.cos(phi), torch.sin(phi)), dim=-1)
-        
+
         Y_hat = A_hat.unsqueeze(-1) * phase
 
         return Y_hat.transpose(-3,-2)

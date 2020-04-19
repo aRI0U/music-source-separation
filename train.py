@@ -45,8 +45,9 @@ def val(model, data_loader, criterion, device, desc=None):
         loss = criterion(Y_hat, Y)
 
         sum_loss += loss.cpu().item()
+        break
 
-    return Y_hat, sum_loss / len(data_loader)
+    return Y_hat, sum_loss #/ len(data_loader)
 
 
 def train(model, data_loader, criterion, optimizer, device, desc=None):

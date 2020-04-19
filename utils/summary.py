@@ -47,7 +47,7 @@ class Writer(SummaryWriter):
 
         if sound_tensor.ndim == 2:
             # stereo to mono
-            sound_tensor = sound_tensor.mean(dim=0)
+            sound_tensor = sound_tensor.sum(dim=0)
 
         if subsampling > 1:
             sound_tensor = sound_tensor[::subsampling]
