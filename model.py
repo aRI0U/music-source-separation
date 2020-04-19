@@ -61,10 +61,11 @@ class BiasLayer(nn.Module):
 class AmplitudeEstimator(nn.Module):
     def __init__(
         self,
+        phase_features_dim=1,
         init_bias=torch.zeros(2049), # TODO: change default
         init_scale=torch.ones(2049),
-        nfft=4096,
-        nhop=1024,
+        n_fft=4096,
+        n_hop=1024,
         seq_duration=6.0
     ):
         super(AmplitudeEstimator, self).__init__()
@@ -76,7 +77,7 @@ class AmplitudeEstimator(nn.Module):
         # amplitude layers
         self.bias_layer = BiasLayer(init_bias, init_scale)
         self.fc_A1 = nn.Sequential(
-            nn.Linear(nfft//2+1, 500),
+            nn.Linear(n_fft//2+1, 500),
             nn.ReLU()
         )
         self.fc_A2 = nn.Sequential(
@@ -86,7 +87,7 @@ class AmplitudeEstimator(nn.Module):
 
         # phase layers
         self.fc_phi1 = nn.Sequential(
-            nn.Linear(nfft//2+1, 500),
+            nn.Linear(n_fft//2+1, 500),
             nn.ReLU()
         )
         self.fc_phi2 = nn.Sequential(
@@ -100,7 +101,7 @@ class AmplitudeEstimator(nn.Module):
             nn.ReLU()
         )
 
-        self.reshape = nn.Linear(2, 1)
+        self.reshape = nn.Linear(phase_features_dim+1, 1)
 
 
     def forward(self, amplitude, phase_features):
@@ -126,18 +127,15 @@ class AmplitudeEstimator(nn.Module):
         # extract features from phase features
         phi = self.fc_phi1(phase_features)
         phi = self.fc_phi2(phi)
-
-        features = torch.stack([A, phi], dim=-2)
+        # print(A.shape, phi.shape)
+        features = torch.cat((A.unsqueeze(-2), phi), dim=-2)
         features = self.fc_final(features)
-
+        # print(features.shape)
         features = self.reshape(features.transpose(-2,-1)).squeeze(-1)
-
+        # print(features.shape)
         features = self.bias_layer(features, False)
 
         return features
-
-
-
 
 
 
@@ -151,20 +149,26 @@ class MSS(nn.Module):
 
         self.transform = self.stft
 
-        self.estimator = AmplitudeEstimator()
+        phase_features_dim = 2
+
+        self.estimator = AmplitudeEstimator(
+            phase_features_dim=phase_features_dim,
+            n_fft=n_fft,
+            n_hop=n_hop
+        )
 
     def forward(self, x):
         """
         Input: (batch_size, nb_channels, nb_timesteps)
         Output:() # TODO: find appropriate output
         """
-        X = self.transform(x).transpose(2,3)
+        X = self.transform(x).transpose(-3,-2)
 
         A, phi = F.complex_norm(X), F.angle(X)
 
         phase_features = self.compute_features(phi)
 
-        A_hat = self.estimator(A, phi)
+        A_hat = self.estimator(A, phase_features)
 
         phase = torch.stack((torch.cos(phi), torch.sin(phi)), dim=-1)
 
@@ -174,4 +178,32 @@ class MSS(nn.Module):
 
     @staticmethod
     def compute_features(phi):
-        return phi
+        """
+        Input: (B, C, T, N)
+        Output:(B, C, phase_features_dim, T, N)
+        """
+        dt_phi = phi[:,:,1:,:] - phi[:,:,:-1,:]
+        df_phi = phi[:,:,:,1:] - phi[:,:,:,:-1]
+
+        dt_phi = torch.cat((dt_phi, dt_phi[:,:,-1,:].unsqueeze(-2)), dim=-2)
+        df_phi = torch.cat((df_phi, df_phi[:,:,:,-1].unsqueeze(-1)), dim=-1)
+
+        return torch.stack((df_phi, dt_phi), dim=-2)
+
+    @staticmethod
+    def derivative(x, dim):
+        """Approximate the derivative of a tensor using finite differences
+
+        Parameters
+        ----------
+        x: torch.tensor, shape (*)
+            tensor to be derived
+        dim: int
+            dimension along the tensor should be derived
+
+        Returns
+        -------
+        torch.tensor, shape (*)
+            derivative of `x`
+        """
+        raise NotImplementedError
