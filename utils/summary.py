@@ -41,9 +41,24 @@ class Writer(SummaryWriter):
     def add_scalars(self, *args, **kwargs):
         super(Writer, self).add_scalars(*args, **kwargs, global_step=self.epoch)
 
-    def add_audio(self, tag, sound_tensor, duration=None, subsampling=1):
+    def add_audio(self, tag, sound_tensor, start=0, duration=None, subsampling=1):
+        """Add audio data to Tensorboard
+
+        Parameters
+        ----------
+        tag: str
+            Data identifier
+        sound_tensor: torch.Tensor
+            Sound data
+        start: float
+            timestep the audio must begin on (in seconds)
+        duration: float
+            duration of the audio extract (in seconds). None means full audio
+        subsampling: int
+            sampling rate is 44100 // subsampling
+        """
         if duration:
-            sound_tensor = sound_tensor[...,:44100*duration]
+            sound_tensor = sound_tensor[...,44100*start:44100*(start+duration)]
 
         if sound_tensor.ndim == 2:
             # stereo to mono

@@ -11,3 +11,7 @@ mkdir -p $MUSDB_PATH
 
 unzip -u $ARCHIVE_PATH -d $MUSDB_PATH && rm $ARCHIVE_PATH
 echo "Extracted $MUSDB_DIR dataset in $MUSDB_PATH"
+
+echo "Computing wav files..."
+python3 -m pip install musdb
+musdbconvert $MUSDB_PATH $MUSDB_PATH

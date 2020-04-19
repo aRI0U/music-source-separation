@@ -154,7 +154,7 @@ def main(args):
                 torchaudio.save(str(results_dir / f'vocals_{epoch:03d}.wav'), audio_ex, 44100)
 
                 # save it to tensorboard
-                writer.add_audio('Vocals', audio_ex, duration=30, subsampling=2)
+                writer.add_audio('Vocals', audio_ex, start=5, duration=30, subsampling=2)
 
                 # save checkpoint
                 torch.save(
@@ -230,8 +230,7 @@ if __name__ == '__main__':
     if args.load_model:
         load_model = args.load_model
         with open(args.configs_dir / (args.load_model+'.pkl'), 'rb') as f:
-            args = pickle.load(f)
-            args.num_workers = 4 # TODO: do this properly
+            args = pickle.load(f) # TODO: do this properly
             args.load_model = load_model
 
     else:
