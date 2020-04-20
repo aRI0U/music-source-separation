@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime
+from numpy import load
 import os
 from pathlib import Path
 import pickle
@@ -81,14 +82,32 @@ def main(args):
     for dir in [checkpoints_dir, logs_dir, results_dir]:
         dir.mkdir(exist_ok=True, parents=True)
 
-    # load dataset
+    print('Loading dataset...', end='\t', flush=True)
     train_loader, val_loader = data_loaders(args)
+    print('Done.')
 
-    # create model
+
+    print('Initializing model...', end='\t', flush=True)
+    # choose how to initialize bias layer
+    length = args.nfft//2+1
+    if args.init_bias == 'constant':
+        init_bias = (torch.zeros(length), torch.ones(length))
+    elif args.init_bias == 'mean':
+        stats_path = args.dataset / 'stats'
+        bias = load(stats_path / f'mean_fft{args.nfft:d}-hop{args.nhop:d}.npy')
+        scale = load(stats_path / f'std_fft{args.nfft:d}-hop{args.nhop:d}.npy')
+        init_bias = (torch.from_numpy(bias), torch.from_numpy(scale))
+    elif args.init_bias == 'random':
+        init_bias = (torch.randn(length), torch.exp(torch.randn(length)))
+    else:
+        raise NotImplementedError
+
     model = MSS(
+        init_bias,
         n_fft=args.nfft,
         n_hop=args.nhop
     ).to(args.device)
+    print('Done.')
 
     # initialize optimizer
     optimizer = torch.optim.Adam(model.parameters())
@@ -196,6 +215,8 @@ if __name__ == '__main__':
 
     param.add_argument('--batch_size', type=int, help='batch size',
                         default=16)
+    param.add_argument('--init_bias', type=str, help='initial value of bias layer',
+                        default='mean', choices=['constant', 'mean', 'random'])
     param.add_argument('--nfft', type=int, help='STFT fft size and window size',
                         default=4096)
     param.add_argument('--nhop', type=int, help='STFT hop size',

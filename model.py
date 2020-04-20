@@ -1,3 +1,5 @@
+from math import pi
+
 import torch
 import torch.nn as nn
 import torchaudio.functional as F
@@ -61,9 +63,8 @@ class BiasLayer(nn.Module):
 class AmplitudeEstimator(nn.Module):
     def __init__(
         self,
-        phase_features_dim=1,
-        init_bias=torch.zeros(2049), # TODO: change default
-        init_scale=torch.ones(2049),
+        phase_features_dim,
+        init_bias,
         n_fft=4096,
         n_hop=1024,
         seq_duration=6.0
@@ -75,7 +76,7 @@ class AmplitudeEstimator(nn.Module):
         # d_in = nb_channels * nfft//2 + nb_timesteps // (nhop+1) + 2
 
         # amplitude layers
-        self.bias_layer = BiasLayer(init_bias, init_scale)
+        self.bias_layer = BiasLayer(*init_bias)
         self.fc_A1 = nn.Sequential(
             nn.Linear(n_fft//2+1, 500),
             nn.ReLU()
@@ -141,18 +142,31 @@ class AmplitudeEstimator(nn.Module):
 
 
 class MSS(nn.Module):
-    def __init__(self, n_fft=4096, n_hop=1024):
+    def __init__(
+        self,
+        init_bias,
+        n_fft=4096,
+        n_hop=1024
+    ):
         super(MSS, self).__init__()
+
+        # self.n_fft = n_fft
+        # self.n_hop = n_hop
 
         # input transformation
         self.stft = STFT(n_fft, n_hop)
 
         self.transform = self.stft
 
+        # phase preprocessing
         phase_features_dim = 2
+        self.phase_shift = nn.Parameter(
+            2 * pi * n_hop / n_fft * torch.arange(n_fft//2+1)
+        )
 
         self.estimator = AmplitudeEstimator(
-            phase_features_dim=phase_features_dim,
+            phase_features_dim,
+            init_bias,
             n_fft=n_fft,
             n_hop=n_hop
         )
@@ -176,8 +190,8 @@ class MSS(nn.Module):
 
         return Y_hat.transpose(-3,-2)
 
-    @staticmethod
-    def compute_features(phi):
+
+    def compute_features(self, phi):
         """
         Input: (B, C, T, N)
         Output:(B, C, phase_features_dim, T, N)
@@ -188,7 +202,13 @@ class MSS(nn.Module):
         dt_phi = torch.cat((dt_phi, dt_phi[:,:,-1,:].unsqueeze(-2)), dim=-2)
         df_phi = torch.cat((df_phi, df_phi[:,:,:,-1].unsqueeze(-1)), dim=-1)
 
-        return torch.stack((df_phi, dt_phi), dim=-2)
+        dt_phi *= self.phase_shift
+        df_phi -= pi
+
+        d_phi = torch.stack((df_phi, dt_phi), dim=-2)
+        d_phi = (d_phi + pi) % (2*pi) - pi
+
+        return d_phi
 
     @staticmethod
     def derivative(x, dim):
