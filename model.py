@@ -196,11 +196,8 @@ class MSS(nn.Module):
         Input: (B, C, T, N)
         Output:(B, C, phase_features_dim, T, N)
         """
-        dt_phi = phi[:,:,1:,:] - phi[:,:,:-1,:]
-        df_phi = phi[:,:,:,1:] - phi[:,:,:,:-1]
-
-        dt_phi = torch.cat((dt_phi, dt_phi[:,:,-1,:].unsqueeze(-2)), dim=-2)
-        df_phi = torch.cat((df_phi, df_phi[:,:,:,-1].unsqueeze(-1)), dim=-1)
+        dt_phi = self.derivative(phi, -2)
+        df_phi = self.derivative(phi, -1)
 
         dt_phi *= self.phase_shift
         df_phi -= pi
@@ -226,4 +223,5 @@ class MSS(nn.Module):
         torch.tensor, shape (*)
             derivative of `x`
         """
-        raise NotImplementedError
+        dx = x.narrow(dim, 1, x.size(dim)-1) - x.narrow(dim, 0, x.size(dim)-1)
+        return torch.cat((dx, dx.narrow(dim, -1, 1)), dim=dim)
