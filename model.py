@@ -161,7 +161,8 @@ class MSS(nn.Module):
         # phase preprocessing
         phase_features_dim = 2
         self.phase_shift = nn.Parameter(
-            2 * pi * n_hop / n_fft * torch.arange(n_fft//2+1)
+            2 * pi * n_hop / n_fft * torch.arange(n_fft//2+1),
+            requires_grad=False
         )
 
         self.estimator = AmplitudeEstimator(
@@ -199,11 +200,33 @@ class MSS(nn.Module):
         dt_phi = self.derivative(phi, -2)
         df_phi = self.derivative(phi, -1)
 
-        dt_phi *= self.phase_shift
+        # # display dt_phi distribution
+        # import matplotlib.pyplot as plt
+        # plt.hist(dt_phi.reshape(-1).cpu().numpy(), bins=1000)
+        # plt.show()
+        # plt.hist(df_phi.reshape(-1).cpu().numpy(), bins=1000)
+        # plt.show()
+        # for i in range(5):
+        #     print('b', i)
+        #     plt.hist(dt_phi[...,i].reshape(-1).cpu().numpy(), bins=1000)
+        #     plt.show()
+        # display df_phi distribution
+
+        dt_phi -= self.phase_shift
         df_phi -= pi
+
+        # for i in range(5):
+        #     print('a', i)
+        #     plt.hist(dt_phi[...,i].reshape(-1).cpu().numpy(), bins=1000)
+        #     plt.show()
 
         d_phi = torch.stack((df_phi, dt_phi), dim=-2)
         d_phi = (d_phi + pi) % (2*pi) - pi
+
+        # plt.hist(d_phi[...,1,:].reshape(-1).cpu().numpy(), bins=1000)
+        # plt.show()
+        # plt.hist(d_phi[...,0,:].reshape(-1).cpu().numpy(), bins=1000)
+        # plt.show()
 
         return d_phi
 
