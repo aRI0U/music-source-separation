@@ -1,4 +1,5 @@
-from math import pi
+from math import pi, sqrt
+from scipy.signal.windows import gaussian as gaussian_window
 
 import torch
 import torch.nn as nn
@@ -9,13 +10,24 @@ class STFT(nn.Module):
         self,
         n_fft=4096,
         n_hop=1024,
-        center=False
+        center=False,
+        kind_window='hann'
     ):
         super(STFT, self).__init__()
-        self.window = nn.Parameter(
-            torch.hann_window(n_fft),
-            requires_grad=False
-        )
+
+        # choose stft window
+        if kind_window == 'bartlett':
+            window = torch.bartlett_window(n_fft)
+        elif kind_window == 'gaussian':
+            window = gaussian_window(n_fft, 1/sqrt(pi))
+        elif kind_window == 'hamming':
+            window = torch.hamming_window(n_fft)
+        elif kind_window == 'hann':
+            window = torch.hann_window(n_fft)
+        else:
+            raise NotImplementedError
+        self.window = nn.Parameter(window, requires_grad=False)
+
         self.n_fft = n_fft
         self.n_hop = n_hop
         self.center = center
@@ -46,6 +58,17 @@ class STFT(nn.Module):
         )
         return stft_f
 
+    def istft(self, x):
+        return F.istft(
+            x,
+            n_fft=self.n_fft,
+            hop_length=self.n_hop,
+            window=self.window,
+            center=self.center,
+            normalized=False,
+            onesided=True,
+            pad_mode='reflect'
+        )
 
 class BiasLayer(nn.Module):
     def __init__(self, init_bias, init_scale):
@@ -74,9 +97,9 @@ class AmplitudeEstimator(nn.Module):
         # sample_rate = 44100
         # nb_timesteps = int(sample_rate * seq_duration)
         # d_in = nb_channels * nfft//2 + nb_timesteps // (nhop+1) + 2
+        self.bias_layer = BiasLayer(*init_bias)
 
         # amplitude layers
-        self.bias_layer = BiasLayer(*init_bias)
         self.fc_A1 = nn.Sequential(
             nn.Linear(n_fft//2+1, 500),
             nn.ReLU()
@@ -103,7 +126,6 @@ class AmplitudeEstimator(nn.Module):
         )
 
         self.reshape = nn.Linear(phase_features_dim+1, 1)
-
 
     def forward(self, amplitude, phase_features):
         """Estimate the amplitude of the unmixed signal
@@ -139,14 +161,94 @@ class AmplitudeEstimator(nn.Module):
         return features
 
 
+class AmplitudeEstimator2(nn.Module):
+    def __init__(
+        self,
+        phase_features_dim,
+        init_bias,
+        n_fft=4096,
+        n_hop=1024,
+        context_frames=5,
+        seq_duration=6.0,
+    ):
+        super(AmplitudeEstimator2, self).__init__()
+        # nb_channels = 2
+        # sample_rate = 44100
+        # nb_timesteps = int(sample_rate * seq_duration)
+        # d_in = nb_channels * nfft//2 + nb_timesteps // (nhop+1) + 2
+        self.bias_layer = BiasLayer(*init_bias)
 
+        # amplitude layers
+        self.conv_A = nn.Sequential(
+            nn.ReflectionPad2d((0, 0, context_frames, context_frames)),
+            nn.Conv2d(n_fft//2+1, 500, (2*context_frames+1, 2)),
+            nn.ReLU()
+        )
+        self.fc_A = nn.Sequential(
+            nn.Linear(500, 500),
+            nn.ReLU()
+        )
+
+        # phase layers
+        self.conv_phi = nn.Sequential(
+            nn.Conv3d(n_fft//2+1, 500, (2*context_frames+1, 1, 2), padding=(context_frames, 0, 0)),
+            nn.ReLU()
+        )
+        self.fc_phi = nn.Sequential(
+            nn.Linear(500, 500),
+            nn.ReLU()
+        )
+
+        # combining layers
+        self.fc_final = nn.Sequential(
+            nn.Linear(500, 2049),
+            nn.ReLU()
+        )
+
+        self.reshape = nn.Linear(phase_features_dim+1, 1)
+
+    def forward(self, amplitude, phase_features):
+        """Estimate the amplitude of the unmixed signal
+
+        Parameters
+        ----------
+        amplitude: torch.tensor, shape (batch_size, nb_channels, L//(nhop+1)+1, nfft//2+1)
+            amplitude of the mixture signal
+        phase_features: torch.tensor shape (batch_size, nb_channels, L//(nhop+1)+1, phase_features_dim, nfft//2+1)
+            phase of the mixture signal
+
+        Returns
+        -------
+        torch.tensor
+            amplitude of the unmixed signal
+        """
+        # extract features from amplitude
+        A = self.bias_layer(amplitude, True, rescale=True)
+
+        A = self.conv_A(A.transpose(-3,-1)).transpose(-3, -1)
+        A = self.fc_A(A)
+
+        # extract features from phase features
+        phi = self.conv_phi(phase_features.transpose(-4, -1)).transpose(-4, -1)
+        phi = self.fc_phi(phi)
+        # print(A.shape, phi.shape)
+        features = torch.cat((A.unsqueeze(-2), phi), dim=-2)
+        features = self.fc_final(features)
+        # print(features.shape)
+        features = self.reshape(features.transpose(-2,-1)).squeeze(-1)
+        # print(features.shape)
+        features = self.bias_layer(features, False)
+
+        return features
 
 class MSS(nn.Module):
     def __init__(
         self,
         init_bias,
         n_fft=4096,
-        n_hop=1024
+        n_hop=1024,
+        context_frames=5,
+        window=None
     ):
         super(MSS, self).__init__()
 
@@ -154,7 +256,7 @@ class MSS(nn.Module):
         # self.n_hop = n_hop
 
         # input transformation
-        self.stft = STFT(n_fft, n_hop)
+        self.stft = STFT(n_fft, n_hop, window)
 
         self.transform = self.stft
 
@@ -165,11 +267,12 @@ class MSS(nn.Module):
             requires_grad=False
         )
 
-        self.estimator = AmplitudeEstimator(
+        self.estimator = AmplitudeEstimator2(
             phase_features_dim,
             init_bias,
             n_fft=n_fft,
-            n_hop=n_hop
+            n_hop=n_hop,
+            context_frames=context_frames
         )
 
     def forward(self, x):
@@ -203,9 +306,12 @@ class MSS(nn.Module):
         # # display dt_phi distribution
         # import matplotlib.pyplot as plt
         # plt.hist(dt_phi.reshape(-1).cpu().numpy(), bins=1000)
+        # plt.title('$\\Delta_t \\varphi$ (before preprocessing)')
         # plt.show()
         # plt.hist(df_phi.reshape(-1).cpu().numpy(), bins=1000)
+        # plt.title('$\\Delta_f \\varphi$ (before preprocessing)')
         # plt.show()
+
         # for i in range(5):
         #     print('b', i)
         #     plt.hist(dt_phi[...,i].reshape(-1).cpu().numpy(), bins=1000)
@@ -219,13 +325,15 @@ class MSS(nn.Module):
         #     print('a', i)
         #     plt.hist(dt_phi[...,i].reshape(-1).cpu().numpy(), bins=1000)
         #     plt.show()
-
+        # print('done')
         d_phi = torch.stack((df_phi, dt_phi), dim=-2)
         d_phi = (d_phi + pi) % (2*pi) - pi
 
         # plt.hist(d_phi[...,1,:].reshape(-1).cpu().numpy(), bins=1000)
+        # plt.title('$\\Delta_t \\varphi$ (after preprocessing)')
         # plt.show()
         # plt.hist(d_phi[...,0,:].reshape(-1).cpu().numpy(), bins=1000)
+        # plt.title('$\\Delta_f \\varphi$ (after preprocessing)')
         # plt.show()
 
         return d_phi

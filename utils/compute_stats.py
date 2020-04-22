@@ -1,8 +1,8 @@
 """Compute the mean and standard deviation per frequency bin over the training set
 """
-
-from numpy import save
+import numpy as np
 from pathlib import Path
+from scipy.signal.windows import gaussian as gaussian_window
 import time
 from tqdm import tqdm
 
@@ -21,7 +21,7 @@ device = torch.device('cuda' if use_cuda else 'cpu')
 # STFT params
 n_fft = 4096
 n_hop = 1024
-window = torch.hann_window(n_fft).to(device)
+window = torch.from_numpy(gaussian_window(n_fft, 1/np.sqrt(np.pi))).to(device)
 center = False
 normalized = False
 onesided = True
@@ -59,8 +59,8 @@ A_mean = A_sum / n_samples
 A_sqmean = A_sqsum / n_samples
 A_std = torch.sqrt(A_sqmean - A_mean**2)
 
-save(stats_path / f'mean_fft{n_fft:d}-hop{n_hop:d}.npy', A_mean.cpu().numpy(), allow_pickle=False)
-save(stats_path / f'std_fft{n_fft:d}-hop{n_hop:d}.npy', A_std.cpu().numpy(), allow_pickle=False)
+np.save(stats_path / f'mean_fft{n_fft:d}-hop{n_hop:d}.npy', A_mean.cpu().numpy(), allow_pickle=False)
+np.save(stats_path / f'std_fft{n_fft:d}-hop{n_hop:d}.npy', A_std.cpu().numpy(), allow_pickle=False)
 
 t1 = time.time()
 

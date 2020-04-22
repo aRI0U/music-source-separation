@@ -46,9 +46,9 @@ def val(model, data_loader, criterion, device, desc=None):
         loss = criterion(Y_hat, Y)
 
         sum_loss += loss.cpu().item()
-        break
+        # break
 
-    return Y_hat, sum_loss #/ len(data_loader)
+    return Y_hat, sum_loss / len(data_loader)
 
 
 def train(model, data_loader, criterion, optimizer, device, desc=None):
@@ -105,16 +105,18 @@ def main(args):
     model = MSS(
         init_bias,
         n_fft=args.nfft,
-        n_hop=args.nhop
+        n_hop=args.nhop,
+        context_frames=args.context_frames,
+        window=args.window
     ).to(args.device)
     print('Done.')
 
     # initialize optimizer
-    optimizer = torch.optim.Adam(model.parameters())
+    optimizer = torch.optim.Adam(model.parameters(), args.lr)
 
     # choose criterion
     criterion = nn.MSELoss()
-    ISTFT = lambda x: torchaudio.functional.istft(x, n_fft=args.nfft, hop_length=args.nhop)
+    ISTFT = model.stft.istft
 
     # eventually load a previous model
     first_epoch = 1
@@ -170,10 +172,10 @@ def main(args):
                 audio_ex = ISTFT(example).squeeze(0)
 
                 # save it in a file
-                torchaudio.save(str(results_dir / f'vocals_{epoch:03d}.wav'), audio_ex, 44100)
+                torchaudio.save(str(results_dir / f'{args.instrument}_{epoch:03d}.wav'), audio_ex, 44100)
 
                 # save it to tensorboard
-                writer.add_audio('Vocals', audio_ex, start=5, duration=30, subsampling=2)
+                writer.add_audio(args.instrument.capitalize(), audio_ex, start=5, duration=30, subsampling=2)
 
                 # save checkpoint
                 torch.save(
@@ -212,11 +214,15 @@ if __name__ == '__main__':
                         default=50)
     expr.add_argument('--track_ext', type=str, help='choose between AAC or WAV',
                         default='wav', choices=['aac', 'wav'])
+    expr.add_argument('--instrument', type=str, help='instrument to be extracted',
+                        default='vocals', choices=['vocals', 'bass', 'drums', 'other'])
 
     param.add_argument('--batch_size', type=int, help='batch size',
                         default=16)
     param.add_argument('--init_bias', type=str, help='initial value of bias layer',
                         default='mean', choices=['constant', 'mean', 'random'])
+    param.add_argument('--lr', type=float, help='learning rate of optimizer',
+                        default=1e-3)
     param.add_argument('--nfft', type=int, help='STFT fft size and window size',
                         default=4096)
     param.add_argument('--nhop', type=int, help='STFT hop size',
@@ -227,6 +233,10 @@ if __name__ == '__main__':
                         default=6.0)
     param.add_argument('--source_augmentations', type=str, nargs='+', help='source_augmentations',
                         default=['gain', 'channelswap'])
+    param.add_argument('--context_frames', type=int, help='number of frames before and after used in reconstruction',
+                        default=5)
+    param.add_argument('--window', type=str, help='window used in STFT',
+                        default='gaussian', choices=['bartlett', 'gaussian', 'hamming', 'hann'])
 
     misc.add_argument('--configs_dir', type=Path, help='where config files are stored',
                         default='configs')

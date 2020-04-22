@@ -35,13 +35,14 @@ def _augment_channelswap(audio):
 class MUSDBDataset(Dataset):
     def __init__(
         self,
-        target='vocals',
+        target,
         root=None,
         seq_duration=6.0,
         samples_per_track=64,
         source_augmentations=lambda audio: audio,
         random_track_mix=False,
         dtype=torch.float32,
+        return_path=False,
         **musdb_kwargs
     ):
         """MUSDB18 torch.data.Dataset that samples from the MUSDB tracks
@@ -50,7 +51,7 @@ class MUSDBDataset(Dataset):
         Parameters
         ----------
         target : str
-            target name of the source to be separated, defaults to ``vocals``.
+            target name of the source to be separated.
         root : str
             root path of MUSDB
         seq_duration : float
@@ -92,7 +93,8 @@ class MUSDBDataset(Dataset):
             )
             self.mus = musdb.DB(download=True, **musdb_kwargs)
 
-        self.split = musdb_kwargs['split']
+        self.split = musdb_kwargs.get('split', 'test')
+        self.return_path = return_path
 
     def __getitem__(self, idx):
         """
@@ -137,7 +139,7 @@ class MUSDBDataset(Dataset):
                 y = stems[target_ind]
             # assuming vocal/accompaniment scenario if target!=source
             else:
-                vocind = list(self.mus.setup['sources'].keys()).index('vocals')
+                vocind = list(self.mus.setup['sources'].keys()).index(self.target)
                 # apply time domain subtraction
                 y = x - stems[vocind]
 
@@ -153,6 +155,8 @@ class MUSDBDataset(Dataset):
                 track.targets[self.target].audio.T,
                 dtype=self.dtype
             )
+        if self.return_path:
+            return x, y, track.path
 
         return x, y
 
@@ -177,6 +181,7 @@ def data_loaders(args):
     )
 
     train_dataset = MUSDBDataset(
+        args.instrument,
         root=args.dataset,
         samples_per_track=args.samples_per_track,
         seq_duration=args.seq_duration,
@@ -187,6 +192,7 @@ def data_loaders(args):
         split='train'
     )
     valid_dataset = MUSDBDataset(
+        args.instrument,
         root=args.dataset,
         samples_per_track=1,
         seq_duration=None,
